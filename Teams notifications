@@ -1,0 +1,5 @@
+# Store the Teams channel incoming webhook URL as a secret
+az keyvault secret set \
+  --vault-name <kv-dethub-dev> \
+  --name dethub-teams-webhook \
+  --value <https://outlook.office.com/webhook/...>
