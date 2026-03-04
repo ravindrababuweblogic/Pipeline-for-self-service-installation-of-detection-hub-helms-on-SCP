@@ -1,0 +1,296 @@
+
+# azure-pipelines-dethub.yml
+
+trigger: none
+pr: none
+
+parameters:
+  - name: environment
+    displayName: Environment
+    type: string
+    default: dev
+    values: [dev, test, stage, prod]
+  - name: namespace
+    displayName: Kubernetes Namespace
+    type: string
+    default: dev-dethub
+  - name: releaseName
+    displayName: Helm Release Name
+    type: string
+    default: dethub
+  - name: chartVersion
+    displayName: Chart Version
+    type: string
+    default: 0.1.0
+  - name: dryRun
+    displayName: Dry Run
+    type: boolean
+    default: false
+  - name: rollbackOnFailure
+    displayName: Rollback On Failure
+    type: boolean
+    default: true
+
+variables:
+  HELM_CHART: 'symphonyfs/detectionhub'   # TODO: confirm official repo/chart path
+  ACR_NAME: 'symphonyfs'                  # TODO: confirm ACR name
+  AKS_NAME: 'aks-scp-dev-uks-st-scratch'  # Provided by user
+  AKS_RG: '<REPLACE_WITH_AKS_RESOURCE_GROUP>'    # TODO: provide RG
+  AZ_SUB_CONN: '<REPLACE_WITH_AZURE_SERVICE_CONNECTION>'  # TODO
+  KEYVAULT_NAME: '<REPLACE_WITH_KEYVAULT_NAME>'           # TODO per env if needed
+  # Option A: Store Teams webhook in Key Vault as 'dethub-teams-webhook'
+  # Option B: Define pipeline variable TEAMS_WEBHOOK_URL
+
+stages:
+  - stage: Plan
+    displayName: "Plan – Resolve Inputs"
+    jobs:
+      - job: Plan
+        steps:
+          - checkout: self
+
+          # Resolve and persist inputs
+          - task: Bash@3
+            name: Resolve
+            displayName: "Resolve Chart and Inputs"
+            env:
+              ENV: ${{ parameters.environment }}
+              NAMESPACE: ${{ parameters.namespace }}
+              RELEASE: ${{ parameters.releaseName }}
+              VERSION: ${{ parameters.chartVersion }}
+            inputs:
+              targetType: inline
+              script: |
+                echo "ENV=$ENV" | tee env.props
+                echo "NAMESPACE=$NAMESPACE" | tee -a env.props
+                echo "RELEASE=$RELEASE" | tee -a env.props
+                echo "VERSION=$VERSION" | tee -a env.props
+                cat env.props
+
+          - publish: env.props
+            artifact: plan_props
+
+  - stage: Deploy
+    displayName: "Deploy – Helm Upgrade/Install"
+    dependsOn: Plan
+    condition: succeeded()
+    jobs:
+      - deployment: Deploy
+        environment: ${{ parameters.environment }}-dethub
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: plan_props
+
+                - task: Bash@3
+                  name: LoadProps
+                  displayName: "Load Plan Props"
+                  inputs:
+                    targetType: inline
+                    script: |
+                      set -e
+                      source $(Pipeline.Workspace)/plan_props/env.props
+                      echo "Loaded ENV=$ENV, NAMESPACE=$NAMESPACE, RELEASE=$RELEASE, VERSION=$VERSION"
+
+                # Azure login & AKS context
+                - task: AzureCLI@2
+                  displayName: "Azure Login and AKS Get-Credentials"
+                  inputs:
+                    azureSubscription: $(AZ_SUB_CONN)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -e
+                      az acr login --name $(ACR_NAME)
+                      az aks get-credentials -n $(AKS_NAME) -g $(AKS_RG) --overwrite-existing
+
+                - task: HelmInstaller@1
+                  inputs:
+                    helmVersionToInstall: '3.12.0'
+
+                - task: Bash@3
+                  displayName: "Pre-Checks: Namespace, Secret, PDB Rule"
+                  inputs:
+                    targetType: inline
+                    script: |
+                      set -e
+                      source $(Pipeline.Workspace)/plan_props/env.props
+
+                      # Namespace
+                      if ! kubectl get ns "$NAMESPACE" >/dev/null 2>&1; then
+                        echo "Namespace $NAMESPACE not found. Creating..."
+                        kubectl create ns "$NAMESPACE"
+                      fi
+
+                      # Ensure regcred-acr exists
+                      if ! kubectl get secret regcred-acr -n "$NAMESPACE" >/dev/null 2>&1; then
+                        echo "ERROR: regcred-acr secret missing in $NAMESPACE."
+                        exit 1
+                      fi
+
+                      # CNPG single-replica PDB removal logic (best-effort)
+                      CNPG=$(kubectl get clusters.postgresql.cnpg.io -n "$NAMESPACE" -o name 2>/dev/null | head -n1 || true)
+                      if [ -n "$CNPG" ]; then
+                        REPLICAS=$(kubectl get "$CNPG" -n "$NAMESPACE" -o jsonpath='{.spec.instances}' 2>/dev/null || echo "0")
+                        if [ "$REPLICAS" = "1" ]; then
+                          echo "Single-replica CNPG detected. Removing PDBs (if any)."
+                          kubectl delete pdb -n "$NAMESPACE" --all --ignore-not-found
+                        fi
+                      fi
+
+                # Optional: pull secrets from Key Vault (maps to variables)
+                - task: AzureKeyVault@2
+                  displayName: "Get Secrets from Key Vault"
+                  inputs:
+                    azureSubscription: $(AZ_SUB_CONN)
+                    KeyVaultName: $(KEYVAULT_NAME)
+                    SecretsFilter: 'minio-root-password,superset-admin-password,cnpg-initdb-secret,superset-initdb-secret,dethub-teams-webhook'
+                    RunAsPreJob: false
+                  continueOnError: true
+
+                - task: Bash@3
+                  name: HelmDeploy
+                  displayName: "Helm Upgrade/Install Detection Hub"
+                  env:
+                    DRYRUN: ${{ parameters.dryRun }}
+                  inputs:
+                    targetType: inline
+                    script: |
+                      set -e
+                      source $(Pipeline.Workspace)/plan_props/env.props
+
+                      # Build --set overrides from Key Vault or pipeline vars
+                      SET_ARGS=""
+                      if [ -n "$(minio-root-password)" ]; then
+                        SET_ARGS="$SET_ARGS --set minio.rootPassword=$(minio-root-password)"
+                      fi
+                      if [ -n "$(superset-admin-password)" ]; then
+                        SET_ARGS="$SET_ARGS --set superset.init.adminUser.password=$(superset-admin-password)"
+                      fi
+                      if [ -n "$(cnpg-initdb-secret)" ]; then
+                        SET_ARGS="$SET_ARGS --set cn-postgres.bootstrap.initdb.secret.name=$(cnpg-initdb-secret)"
+                      fi
+                      if [ -n "$(superset-initdb-secret)" ]; then
+                        SET_ARGS="$SET_ARGS --set superset-postgres.bootstrap.initdb.secret.name=$(superset-initdb-secret)"
+                      fi
+
+                      echo "SET_ARGS=$SET_ARGS" > setargs.txt
+
+                      helm repo update
+
+                      if [ "$DRYRUN" = "True" ]; then
+                        echo "Running Helm in DRY RUN mode"
+                        helm upgrade --install "$RELEASE" "$(HELM_CHART)" \
+                          --namespace "$NAMESPACE" \
+                          --version "$VERSION" \
+                          --dry-run $SET_ARGS
+                      else
+                        helm upgrade --install "$RELEASE" "$(HELM_CHART)" \
+                          --namespace "$NAMESPACE" \
+                          --version "$VERSION" \
+                          $SET_ARGS
+                      fi
+
+                - task: Bash@3
+                  displayName: "Post-Deploy: Rollout Status + Helm Test"
+                  name: PostChecks
+                  inputs:
+                    targetType: inline
+                    script: |
+                      set +e
+                      source $(Pipeline.Workspace)/plan_props/env.props
+
+                      kubectl rollout status deploy/core-api -n "$NAMESPACE" --timeout=180s
+                      K1=$?
+                      kubectl rollout status statefulset/superset-db -n "$NAMESPACE" --timeout=180s
+                      K2=$?
+                      kubectl rollout status deploy/superset -n "$NAMESPACE" --timeout=180s
+                      K3=$?
+
+                      helm test "$RELEASE" -n "$NAMESPACE"
+                      K4=$?
+
+                      if [ $K1 -ne 0 ] || [ $K2 -ne 0 ] || [ $K3 -ne 0 ] || [ $K4 -ne 0 ]; then
+                        echo "POSTCHECKS_FAILED=1" >> $PIPELINE_WORKSPACE/post_status.props
+                        exit 1
+                      else
+                        echo "POSTCHECKS_FAILED=0" >> $PIPELINE_WORKSPACE/post_status.props
+                        exit 0
+                      fi
+
+                # Always notify to Teams on success/failure
+                - task: Bash@3
+                  condition: always()
+                  displayName: "Notify Microsoft Teams"
+                  inputs:
+                    targetType: inline
+                    script: |
+                      set +e
+                      source $(Pipeline.Workspace)/plan_props/env.props || true
+
+                      STATUS="Succeeded"
+                      COLOR="0078D7" # blue
+                      if [ "$(Agent.JobStatus)" != "Succeeded" ]; then
+                        STATUS="Failed"
+                        COLOR="D13438" # red
+                      fi
+
+                      # Prefer Key Vault secret 'dethub-teams-webhook', else fall back to pipeline var TEAMS_WEBHOOK_URL
+                      WEBHOOK_URL="$(dethub-teams-webhook)"
+                      if [ -z "$WEBHOOK_URL" ] || [ "$WEBHOOK_URL" = "$(dethub-teams-webhook)" ]; then
+                        WEBHOOK_URL="$(TEAMS_WEBHOOK_URL)"
+                      fi
+
+                      if [ -z "$WEBHOOK_URL" ] || [ "$WEBHOOK_URL" = "$(TEAMS_WEBHOOK_URL)" ]; then
+                        echo "No Teams webhook found. Set Key Vault secret 'dethub-teams-webhook' or pipeline variable TEAMS_WEBHOOK_URL. Skipping notification."
+                        exit 0
+                      fi
+
+                      read -r -d '' MESSAGE_PAYLOAD << EOM
+                      {
+                        "@type": "MessageCard",
+                        "@context": "http://schema.org/extensions",
+                        "summary": "Detection Hub Deploy $STATUS",
+                        "themeColor": "$COLOR",
+                        "title": "Detection Hub Deployment $STATUS",
+                        "sections": [{
+                          "facts": [
+                            {"name":"Environment","value":"${{ parameters.environment }}"},
+                            {"name":"Namespace","value":"${{ parameters.namespace }}"},
+                            {"name":"Release","value":"${{ parameters.releaseName }}"},
+                            {"name":"Version","value":"${{ parameters.chartVersion }}"},
+                            {"name":"Build","value":"$(Build.BuildNumber)"}
+                          ]
+                        }]
+                      }
+                      EOM
+
+                      curl -sS -H 'Content-Type: application/json' -d "$MESSAGE_PAYLOAD" "$WEBHOOK_URL" || true
+
+                # Optional rollback if deployment failed
+                - task: Bash@3
+                  condition: failed() and eq('${{ parameters.rollbackOnFailure }}','True')
+                  displayName: "Rollback on Failure"
+                  inputs:
+                    targetType: inline
+                    script: |
+                      set +e
+                      source $(Pipeline.Workspace)/plan_props/env.props
+                      echo "Attempting rollback..."
+                      # Try to compute previous revision without jq
+                      LAST_REV=$(helm history "$RELEASE" -n "$NAMESPACE" | awk 'NR>1 {rev=$1} END{print rev}')
+                      PREV_REV=$(helm history "$RELEASE" -n "$NAMESPACE" | awk 'NR>1 {print $1}' | tail -2 | head -1)
+                      if [ -n "$PREV_REV" ]; then
+                        helm rollback "$RELEASE" "$PREV_REV" -n "$NAMESPACE" || true
+                      else
+                        echo "No previous revision found to rollback."
+                      fi
+
+                - task: PublishBuildArtifacts@1
+                  displayName: "Publish Deploy Artifacts"
+                  inputs:
+                    PathtoPublish: '$(Pipeline.Workspace)'
+                    ArtifactName: 'deploy_artifacts'
+                    publishLocation: 'Container'

@@ -1,0 +1,5 @@
+env,aks_cluster,resource_group,namespace,var_group,key_vault
+dev,aks-scp-dev-uks-st-scratch,<RG_DEV>,dev-dethub,vg-dethub-dev,kv-dethub-dev
+test,<AKS_TEST>,<RG_TEST>,test-dethub,vg-dethub-test,kv-dethub-test
+stage,<AKS_STAGE>,<RG_STAGE>,stage-dethub,vg-dethub-stage,kv-dethub-stage
+prod,<AKS_PROD>,<RG_PROD>,prod-dethub,vg-dethub-prod,kv-dethub-prod
