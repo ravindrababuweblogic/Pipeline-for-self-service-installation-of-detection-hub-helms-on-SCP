@@ -1,0 +1,16 @@
+steps:
+
+- bash: |
+
+    source $(Pipeline.Workspace)/plan_props/env.props
+
+    echo "Checking application rollout"
+
+    kubectl rollout status statefulset/core-db -n "$NAMESPACE" --timeout=180s
+    kubectl rollout status deploy/core-api -n "$NAMESPACE" --timeout=180s
+    kubectl rollout status statefulset/superset-db -n "$NAMESPACE" --timeout=180s
+    kubectl rollout status deploy/superset -n "$NAMESPACE" --timeout=180s
+
+    helm test "$RELEASE" -n "$NAMESPACE"
+
+  displayName: Post Deployment Verification
