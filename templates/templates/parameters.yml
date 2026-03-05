@@ -1,0 +1,31 @@
+parameters:
+  - name: environment
+    displayName: Environment
+    type: string
+    default: dev
+    values: [dev, test, stage, prod]
+
+  - name: namespace
+    displayName: Kubernetes Namespace
+    type: string
+    default: dev-dethub
+
+  - name: releaseName
+    displayName: Helm Release Name
+    type: string
+    default: dethub
+
+  - name: chartVersion
+    displayName: Chart Version
+    type: string
+    default: 0.1.0
+
+  - name: dryRun
+    displayName: Dry Run
+    type: boolean
+    default: false
+
+  - name: rollbackOnFailure
+    displayName: Rollback On Failure
+    type: boolean
+    default: true
