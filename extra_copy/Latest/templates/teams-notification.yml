@@ -1,0 +1,48 @@
+parameters:
+  environment: ''
+  namespace: ''
+  releaseName: ''
+  chartVersion: ''
+
+steps:
+
+- bash: |
+
+    STATUS="Succeeded"
+    COLOR="0078D7"
+
+    if [ "$(Agent.JobStatus)" != "Succeeded" ]; then
+      STATUS="Failed"
+      COLOR="D13438"
+    fi
+
+    WEBHOOK_URL="$(TEAMS_WEBHOOK_URL)"
+
+    if [ -z "$WEBHOOK_URL" ]; then
+      exit 0
+    fi
+
+    MESSAGE=$(cat <<EOF
+    {
+      "@type": "MessageCard",
+      "@context": "http://schema.org/extensions",
+      "summary": "Detection Hub Deploy",
+      "themeColor": "$COLOR",
+      "title": "Detection Hub Deployment $STATUS",
+      "sections": [{
+        "facts": [
+          {"name":"Environment","value":"${{ parameters.environment }}"},
+          {"name":"Namespace","value":"${{ parameters.namespace }}"},
+          {"name":"Release","value":"${{ parameters.releaseName }}"},
+          {"name":"Version","value":"${{ parameters.chartVersion }}"}
+        ]
+      }]
+    }
+    EOF
+    )
+
+    curl -H 'Content-Type: application/json' \
+      -d "$MESSAGE" \
+      "$WEBHOOK_URL"
+
+  displayName: Teams Notification
