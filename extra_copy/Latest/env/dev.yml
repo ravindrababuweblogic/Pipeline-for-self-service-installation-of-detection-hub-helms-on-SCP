@@ -1,0 +1,5 @@
+variables:
+
+AKS_NAME: aks-scp-dev-uks
+AKS_RG: rg-scp-dev
+KEYVAULT_NAME: kv-scp-dev
