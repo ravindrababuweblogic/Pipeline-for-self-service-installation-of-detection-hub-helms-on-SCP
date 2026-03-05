@@ -1,0 +1,55 @@
+parameters:
+  environment: ''
+  namespace: ''
+  releaseName: ''
+  chartVersion: ''
+
+steps:
+- task: Bash@3
+  condition: always()
+  displayName: "Notify Microsoft Teams"
+  inputs:
+    targetType: inline
+    script: |
+      set +e
+
+      STATUS="Succeeded"
+      COLOR="0078D7"
+
+      if [ "$(Agent.JobStatus)" != "Succeeded" ]; then
+        STATUS="Failed"
+        COLOR="D13438"
+      fi
+
+      WEBHOOK_URL="$(dethub-teams-webhook)"
+
+      if [ -z "$WEBHOOK_URL" ]; then
+        WEBHOOK_URL="$(TEAMS_WEBHOOK_URL)"
+      fi
+
+      if [ -z "$WEBHOOK_URL" ]; then
+        echo "No webhook configured"
+        exit 0
+      fi
+
+      read -r -d '' MESSAGE_PAYLOAD << EOM
+      {
+        "@type": "MessageCard",
+        "@context": "http://schema.org/extensions",
+        "summary": "Detection Hub Deploy $STATUS",
+        "themeColor": "$COLOR",
+        "title": "Detection Hub Deployment $STATUS",
+        "sections": [{
+          "facts": [
+            {"name":"Environment","value":"${{ parameters.environment }}"},
+            {"name":"Namespace","value":"${{ parameters.namespace }}"},
+            {"name":"Release","value":"${{ parameters.releaseName }}"},
+            {"name":"Version","value":"${{ parameters.chartVersion }}"},
+            {"name":"Build","value":"$(Build.BuildNumber)"}
+          ]
+        }]
+      }
+      EOM
+
+      curl -sS -H 'Content-Type: application/json' \
+      -d "$MESSAGE_PAYLOAD" "$WEBHOOK_URL" || true
