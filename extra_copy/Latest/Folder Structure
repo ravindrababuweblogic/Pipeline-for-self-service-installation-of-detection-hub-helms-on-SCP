@@ -1,0 +1,17 @@
+azure-pipeline-dethub/
+│
+├── azure-pipelines.yml
+│
+├── templates/
+│   ├── parameters.yml
+│   ├── variables.yml
+│   ├── prechecks.yml
+│   ├── helm-deploy.yml
+│   ├── postchecks.yml
+│   └── teams-notification.yml
+│
+└── env/
+    ├── dev.yml
+    ├── test.yml
+    ├── stage.yml
+    └── prod.yml
