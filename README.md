@@ -17,3 +17,21 @@ This package contains:
 2. Provide AKS Resource Group, Key Vault name, Teams Webhook URL (secret: `dethub-teams-webhook`).
 3. Confirm Helm chart path (`symphonyfs/detectionhub`) and ACR name (`symphonyfs`).
 4. Run pipeline with defaults: env=dev, namespace=dev-dethub, releaseName=dethub, chartVersion=0.1.0.
+
+========================================================================================================
+#Purpose of Yaml file 
+Purpose of the YAML Pipeline 
+
+The pipeline automates deployment with the following goals: 
+
+Parameterized environment deployments (dev/test/stage/prod) 
+
+Kubernetes validation checks before deployment 
+
+Helm-based installation/upgrade 
+
+Secret retrieval from Azure Key Vault 
+
+Deployment verification 
+
+Notifications and rollback handling 
