@@ -1,0 +1,97 @@
+trigger: none
+pr: none
+
+parameters:
+- template: templates/parameters.yml
+
+variables:
+- template: templates/variables.yml
+- template: env/${{ parameters.environment }}.yml
+
+stages:
+
+# --------------------------
+# PLAN STAGE
+# --------------------------
+
+- stage: Plan
+  displayName: Plan Deployment
+
+  jobs:
+  - job: Plan
+    steps:
+
+    - checkout: self
+
+    - bash: |
+        echo "ENV=${{ parameters.environment }}" > env.props
+        echo "NAMESPACE=${{ parameters.namespace }}" >> env.props
+        echo "RELEASE=${{ parameters.releaseName }}" >> env.props
+        echo "VERSION=${{ parameters.chartVersion }}" >> env.props
+      displayName: Resolve inputs
+
+    - publish: env.props
+      artifact: plan_props
+
+# --------------------------
+# DEPLOY STAGE
+# --------------------------
+
+- stage: Deploy
+  dependsOn: Plan
+
+  jobs:
+  - deployment: Deploy
+    environment: ${{ parameters.environment }}-dethub
+
+    strategy:
+      runOnce:
+        deploy:
+
+          steps:
+
+          - download: current
+            artifact: plan_props
+
+          - bash: |
+              source $(Pipeline.Workspace)/plan_props/env.props
+              echo "Loaded ENV=$ENV NAMESPACE=$NAMESPACE RELEASE=$RELEASE VERSION=$VERSION"
+            displayName: Load parameters
+
+          - task: AzureCLI@2
+            displayName: Login Azure + AKS
+            inputs:
+              azureSubscription: $(AZ_SUB_CONN)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -e
+                az acr login --name $(ACR_NAME)
+                az aks get-credentials -n $(AKS_NAME) -g $(AKS_RG) --overwrite-existing
+
+                echo "Checking cluster connectivity"
+                kubectl cluster-info
+
+          - task: HelmInstaller@1
+            inputs:
+              helmVersionToInstall: '3.12.0'
+
+          - template: templates/prechecks.yml
+
+          - template: templates/helm-deploy.yml
+
+          - template: templates/postchecks.yml
+
+          - template: templates/teams-notification.yml
+            parameters:
+              environment: ${{ parameters.environment }}
+              namespace: ${{ parameters.namespace }}
+              releaseName: ${{ parameters.releaseName }}
+              chartVersion: ${{ parameters.chartVersion }}
+
+          - task: PublishBuildArtifacts@1
+            displayName: Publish artifacts
+            inputs:
+              PathtoPublish: '$(Pipeline.Workspace)'
+              ArtifactName: deploy_artifacts
+              publishLocation: Container
