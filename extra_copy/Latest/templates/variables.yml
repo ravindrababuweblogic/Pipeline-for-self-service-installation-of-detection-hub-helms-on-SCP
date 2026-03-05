@@ -1,0 +1,11 @@
+variables:
+
+HELM_CHART: symphonyfs/detectionhub
+ACR_NAME: symphonyfs
+
+AKS_NAME: aks-scp-dev-uks-st-scratch
+AKS_RG: rg-scp-dev-uks
+
+AZ_SUB_CONN: scp-azure-connection
+
+KEYVAULT_NAME: kv-scp-dev
