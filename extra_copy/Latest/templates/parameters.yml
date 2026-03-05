@@ -1,0 +1,30 @@
+parameters:
+
+- name: environment
+  type: string
+  default: dev
+  values:
+    - dev
+    - test
+    - stage
+    - prod
+
+- name: namespace
+  type: string
+  default: dev-dethub
+
+- name: releaseName
+  type: string
+  default: dethub
+
+- name: chartVersion
+  type: string
+  default: 0.1.0
+
+- name: dryRun
+  type: boolean
+  default: false
+
+- name: rollbackOnFailure
+  type: boolean
+  default: true
