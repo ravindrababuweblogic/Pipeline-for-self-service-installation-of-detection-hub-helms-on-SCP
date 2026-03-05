@@ -1,0 +1,42 @@
+steps:
+
+- task: AzureKeyVault@2
+  displayName: Fetch secrets
+  inputs:
+    azureSubscription: $(AZ_SUB_CONN)
+    KeyVaultName: $(KEYVAULT_NAME)
+    SecretsFilter: 'minio-root-password,superset-admin-password,cnpg-initdb-secret,superset-initdb-secret'
+  continueOnError: true
+
+- bash: |
+
+    source $(Pipeline.Workspace)/plan_props/env.props
+
+    SET_ARGS=""
+
+    if [ -n "$(minio-root-password)" ]; then
+      SET_ARGS="$SET_ARGS --set minio.rootPassword=$(minio-root-password)"
+    fi
+
+    if [ -n "$(superset-admin-password)" ]; then
+      SET_ARGS="$SET_ARGS --set superset.init.adminUser.password=$(superset-admin-password)"
+    fi
+
+    if [ -n "$(cnpg-initdb-secret)" ]; then
+      SET_ARGS="$SET_ARGS --set cn-postgres.bootstrap.initdb.secret.name=$(cnpg-initdb-secret)"
+    fi
+
+    if [ -n "$(superset-initdb-secret)" ]; then
+      SET_ARGS="$SET_ARGS --set superset-postgres.bootstrap.initdb.secret.name=$(superset-initdb-secret)"
+    fi
+
+    helm repo update
+
+    helm upgrade --install "$RELEASE" "$(HELM_CHART)" \
+      --namespace "$NAMESPACE" \
+      --version "$VERSION" \
+      --wait \
+      --timeout 10m \
+      $SET_ARGS
+
+  displayName: Helm Deployment
