@@ -1,0 +1,55 @@
+trigger: none
+pr: none
+
+extends:
+  template: templates/parameters.yml
+
+variables:
+- template: templates/variables.yml
+
+stages:
+
+- stage: Plan
+  jobs:
+  - job: Plan
+    steps:
+    - checkout: self
+
+    - task: Bash@3
+      displayName: Resolve Inputs
+      env:
+        ENV: ${{ parameters.environment }}
+        NAMESPACE: ${{ parameters.namespace }}
+        RELEASE: ${{ parameters.releaseName }}
+        VERSION: ${{ parameters.chartVersion }}
+      inputs:
+        targetType: inline
+        script: |
+          echo "ENV=$ENV" > env.props
+          echo "NAMESPACE=$NAMESPACE" >> env.props
+          echo "RELEASE=$RELEASE" >> env.props
+          echo "VERSION=$VERSION" >> env.props
+
+    - publish: env.props
+      artifact: plan_props
+
+
+- stage: Deploy
+  dependsOn: Plan
+  jobs:
+  - deployment: Deploy
+    environment: ${{ parameters.environment }}-dethub
+    strategy:
+      runOnce:
+        deploy:
+
+          steps:
+          - download: current
+            artifact: plan_props
+
+          - template: templates/teams-notification.yml
+            parameters:
+              environment: ${{ parameters.environment }}
+              namespace: ${{ parameters.namespace }}
+              releaseName: ${{ parameters.releaseName }}
+              chartVersion: ${{ parameters.chartVersion }}
