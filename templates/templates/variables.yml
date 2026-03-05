@@ -1,0 +1,7 @@
+variables:
+  HELM_CHART: 'symphonyfs/detectionhub'
+  ACR_NAME: 'symphonyfs'
+  AKS_NAME: 'aks-scp-dev-uks-st-scratch'
+  AKS_RG: '<REPLACE_WITH_AKS_RESOURCE_GROUP>'
+  AZ_SUB_CONN: '<REPLACE_WITH_AZURE_SERVICE_CONNECTION>'
+  KEYVAULT_NAME: '<REPLACE_WITH_KEYVAULT_NAME>'
