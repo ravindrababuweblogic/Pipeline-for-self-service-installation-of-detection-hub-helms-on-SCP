@@ -1,12 +1,12 @@
-name: Copy Latest folder to new repo
+name: Copy Latest folder to Pipeline_automation_SCP4366
 
 on:
   workflow_dispatch:
     inputs:
       new_repo_name:
-        description: 'Name of the new repository to create under ravindrababuweblogic'
+        description: 'Name of the target repository under ravindrababuweblogic'
         required: true
-        default: 'azure-pipeline-dethub'
+        default: 'Pipeline_automation_SCP4366'
       repo_description:
         description: 'Description for the new repository'
         required: false
@@ -108,7 +108,7 @@ jobs:
           git init
           git checkout -b main
           git add .
-          git commit -m "Initial commit: copy from Latest folder of source repository"
+          git commit -m "Initial commit: copy Latest folder (including README) from source repository"
 
           echo "Pushing to https://github.com/ravindrababuweblogic/$NEW_REPO ..."
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/ravindrababuweblogic/${NEW_REPO}.git"
